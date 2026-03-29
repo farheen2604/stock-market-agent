@@ -1,6 +1,6 @@
 # 📈 Stock Market Intelligence Agent
 
-An AI-powered Stock Market Intelligence Agent built with **Google ADK** and **Gemini 2.5 Flash**, connected to a custom **MCP server** that fetches live stock data from Yahoo Finance. Deployed as a serverless service on **Google Cloud Run**.
+An AI-powered Stock Market Intelligence Agent built with **Google ADK** and **Gemini 2.5 Flash**, connected to a custom **MCP server** that fetches live stock data from **Finnhub API**. Deployed as a serverless service on **Google Cloud Run**.
 
 This is the Project 2 submission for the *Connect AI Agents to Real-World Data using MCP* track.
 
@@ -52,7 +52,6 @@ constitute financial advice.
 ---
 
 ## 🏗️ Architecture
-
 ```
 User Request (HTTP)
         │
@@ -64,7 +63,7 @@ Cloud Run Service
         │           │
         │           ▼ MCP StreamableHTTP
         └── MCP Server (port 5000)
-                └── Yahoo Finance API (live data, no API key needed)
+                └── Finnhub API (live data, 60 calls/min free tier)
                     Tools:
                     ├── get_stock_price()
                     └── get_stock_summary()
@@ -77,16 +76,17 @@ on port 5000, the ADK agent starts on port 8080 and connects to it internally.
 ---
 
 ## 📁 Project Structure
-
 ```
 stock_market_agent/
-├── mcp_server.py              # Custom MCP server — Yahoo Finance tools
+├── mcp_server.py              # Custom MCP server — Finnhub API tools
 ├── startup.sh                 # Starts MCP server + ADK agent
 ├── Dockerfile                 # Cloud Run container definition
 ├── requirements.txt           # Python dependencies
 ├── .env.example               # Config template
 ├── .gitignore
 ├── README.md
+├── LEARNINGS.md               # Issues faced and fixes
+├── SETUP_GUIDE.md             # Step by step setup guide
 └── stock_market_agent/        # ADK agent package
     ├── agent.py               # Agent definition + MCP connection
     ├── __init__.py            # ADK package marker
@@ -100,6 +100,7 @@ stock_market_agent/
 ### Prerequisites
 - Google Cloud project with billing enabled
 - Cloud Shell
+- Finnhub API key (free at finnhub.io)
 - APIs enabled: Vertex AI, Cloud Run, Artifact Registry, Cloud Build
 
 ### Step 1 — Enable APIs
@@ -118,7 +119,15 @@ git clone https://github.com/farheen2604/stock-market-agent.git
 cd stock-market-agent
 ```
 
-### Step 3 — Test locally
+### Step 3 — Configure environment
+```bash
+cp .env.example stock_market_agent/.env
+# Edit .env and add your values:
+# GOOGLE_CLOUD_PROJECT=your-project-id
+# FINNHUB_API_KEY=your-finnhub-api-key
+```
+
+### Step 4 — Test locally
 
 **Tab 1 — Start MCP Server:**
 ```bash
@@ -129,14 +138,15 @@ python mcp_server.py
 **Tab 2 — Start ADK Agent:**
 ```bash
 export MCP_SERVER_URL="http://127.0.0.1:5000/mcp"
-adk web --host 0.0.0.0 --port 8080 --allow_origins "*" stock_market_agent/
+export FINNHUB_API_KEY=your-finnhub-api-key
+adk web --host 0.0.0.0 --port 8080 --allow_origins "*"
 ```
 
 Open Web Preview → port 8080
 
-### Step 4 — Deploy to Cloud Run
+### Step 5 — Deploy to Cloud Run
 ```bash
-PROJECT_ID=project2-stock-market-agent
+PROJECT_ID=your-project-id
 SA_NAME=stock-agent-sa
 SERVICE_ACCOUNT=${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
 REGION=us-central1
@@ -157,7 +167,7 @@ gcloud run deploy stock-market-agent \
   --region ${REGION} \
   --project ${PROJECT_ID} \
   --service-account ${SERVICE_ACCOUNT} \
-  --set-env-vars GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${REGION},GOOGLE_GENAI_USE_VERTEXAI=1,MODEL=gemini-2.5-flash,MCP_SERVER_URL=http://127.0.0.1:5000/mcp \
+  --set-env-vars GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${REGION},GOOGLE_GENAI_USE_VERTEXAI=1,MODEL=gemini-2.5-flash,MCP_SERVER_URL=http://127.0.0.1:5000/mcp,FINNHUB_API_KEY=your-finnhub-api-key \
   --allow-unauthenticated \
   --timeout=300
 ```
@@ -165,13 +175,13 @@ gcloud run deploy stock-market-agent \
 ---
 
 ## 🧪 Sample Test Queries
-
 ```
-1. Analyse AAPL for me
+1. Analyse Apple stocks for me
 2. What is the current stock price of Tesla?
 3. Give me a full analysis of Microsoft
 4. How is Nvidia performing today?
 5. What are analysts saying about Amazon stock?
+6. Give me a stock report for AMZN
 ```
 
 ---
@@ -182,8 +192,8 @@ gcloud run deploy stock-market-agent \
 |---|---|
 | Agent Framework | Google ADK (google-adk 1.14.0) |
 | LLM | Gemini 2.5 Flash via Vertex AI |
-| MCP Server | Custom FastMCP server (mcp + fastmcp) |
-| Data Source | Yahoo Finance API (yfinance) |
+| MCP Server | Custom FastMCP server (fastmcp 2.3.3) |
+| Data Source | Finnhub API (finnhub-python, 60 calls/min free tier) |
 | Deployment | Google Cloud Run (serverless) |
 | Container Build | Google Cloud Build |
 | Auth | IAM Service Account (roles/aiplatform.user) |
@@ -191,12 +201,24 @@ gcloud run deploy stock-market-agent \
 
 ---
 
-## 🧹 Cleanup
+## ⚠️ Why Finnhub instead of Yahoo Finance?
 
+Yahoo Finance (`yfinance`) uses web scraping and gets rate limited
+aggressively on Google Cloud IP ranges. Finnhub is an official financial
+data API with a reliable free tier (60 calls/min) that works consistently
+from Cloud Run. See [LEARNINGS.md](./LEARNINGS.md) for full details.
+
+---
+
+## 🧹 Cleanup
 ```bash
 gcloud run services delete stock-market-agent \
   --region=us-central1 \
-  --project=project2-stock-market-agent \
+  --project=your-project-id \
+  --quiet
+
+gcloud artifacts repositories delete cloud-run-source-deploy \
+  --location=us-central1 \
   --quiet
 ```
 
@@ -206,6 +228,6 @@ gcloud run services delete stock-market-agent \
 
 - [Google ADK Documentation](https://google.github.io/adk-docs/)
 - [FastMCP Documentation](https://github.com/jlowin/fastmcp)
+- [Finnhub API Documentation](https://finnhub.io/docs/api)
 - [Cloud Run Documentation](https://cloud.google.com/run/docs)
-- [yfinance Documentation](https://github.com/ranaroussi/yfinance)
 - [Vertex AI Gemini Models](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models)
